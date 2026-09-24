@@ -117,19 +117,30 @@ jobs:
             exit 0
           fi
 
-          # ── 6. Create the tag ─────────────────────────────────────────────
-          # A lightweight tag via the API, matching how these tags have always
-          # been cut by hand. Deliberately not `git push`: a tag pushed with
-          # GITHUB_TOKEN does not trigger `on: push: tags`, so build-images
-          # would sit silent. Step 8 dispatches it explicitly instead —
-          # workflow_dispatch is an exception to that suppression rule.
-          gh api "repos/${REPO}/git/refs" -f ref="refs/tags/${TAG}" -f sha="${SHA}" --silent
-          echo "Created tag ${TAG} -> ${SHA}"
+          # ── 6. Create the tag AND the release, in one call ────────────────
+          # POST /releases creates the tag itself when tag_name does not yet
+          # exist, using target_commitish. Doing it in one call removes the
+          # partial state a two-step version leaves behind: the first attempt at
+          # this workflow created the tag and then failed on the release, which
+          # left a tag with no notes and no build, and blocked its own retry
+          # (step 2 refuses an existing tag).
+          #
+          # Deliberately the REST API, not `gh release create` / `git push`:
+          #   * `gh release create` shells out to git and fails with "not a git
+          #     repository" — this job has no checkout and does not need one.
+          #   * a tag pushed with GITHUB_TOKEN does NOT trigger `on: push: tags`
+          #     (GitHub suppresses it to prevent recursion), so build-images
+          #     would sit silent. Step 7 dispatches it explicitly instead —
+          #     workflow_dispatch is an exception to that suppression rule.
+          gh api "repos/${REPO}/releases" \
+            -f tag_name="${TAG}" \
+            -f name="${TAG}" \
+            -f target_commitish="${SHA}" \
+            -F generate_notes=true \
+            --jq '"Created release \(.name) at \(.target_commitish[0:8]) -> \(.html_url)"'
 
-          # ── 7. Publish the release notes ──────────────────────────────────
-          gh release create "${TAG}" --target "${SHA}" --title "${TAG}" --generate-notes
-          echo "Created release ${TAG}"
-
-          # ── 8. Build and publish the images ───────────────────────────────
-          gh workflow run build-images.yaml --ref "${TAG}"
+          # ── 7. Build and publish the images ───────────────────────────────
+          # --repo is required: gh infers the repository from git context
+          # otherwise, and there is no checkout here.
+          gh workflow run build-images.yaml --repo "${REPO}" --ref "${TAG}"
           echo "::notice title=Release cut::${TAG} created at ${SHA}; build-images.yaml dispatched against the tag."
