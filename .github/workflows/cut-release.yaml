@@ -132,11 +132,18 @@ jobs:
           #     (GitHub suppresses it to prevent recursion), so build-images
           #     would sit silent. Step 7 dispatches it explicitly instead —
           #     workflow_dispatch is an exception to that suppression rule.
+          # The body is the SAME string previewed in step 5, passed through
+          # explicitly rather than re-requested with `generate_release_notes`.
+          # Two reasons: what the dry run shows is then byte-identical to what
+          # gets published, and the create endpoint's flag is
+          # `generate_release_notes` — `generate_notes` (the name of the
+          # separate preview endpoint) is silently ignored, which published an
+          # empty release the first time round.
           gh api "repos/${REPO}/releases" \
             -f tag_name="${TAG}" \
             -f name="${TAG}" \
             -f target_commitish="${SHA}" \
-            -F generate_notes=true \
+            -f body="${notes}" \
             --jq '"Created release \(.name) at \(.target_commitish[0:8]) -> \(.html_url)"'
 
           # ── 7. Build and publish the images ───────────────────────────────
